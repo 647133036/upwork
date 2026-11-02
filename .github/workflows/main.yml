@@ -1,4 +1,4 @@
-name: fetch-upwork-apk
+name: fetch-upwork-official-packages
 on: workflow_dispatch
 jobs:
   fetch:
@@ -6,36 +6,53 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 安装基础依赖
-        run: sudo apt update && sudo apt install -y wget curl gh
-      - name: 配置UA并抓取页面
+      - name: 初始化系统基础依赖
         run: |
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-          echo "UA=$UA" >> $GITHUB_ENV
-          curl -s -A "$UA" "https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/" > page.html
-          NONCE=$(grep -oP 'data-nonce="\K[a-zA-Z0-9]+' page.html | head -n 1)
-          if [ -z "$NONCE" ]; then
-            echo "WARN: no nonce found, print page head"
-            head -n 200 page.html
-            exit 1
-          fi
-          echo "NONCE=$NONCE" >> $GITHUB_ENV
-      - name: 拉取正版XAPK文件
+          sudo apt update && sudo apt install -y wget curl gh python3-pip
+          pip install playwright
+          playwright install chromium
+      - name: 无头浏览器绕过Cloudflare抓取安卓包
+        run: |
+          from playwright.sync_api import sync_playwright
+          import os
+          with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+              user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              viewport={"width": 1920, "height": 1080},
+              locale="en-US"
+            )
+            page = context.new_page()
+            page.goto("https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/", timeout=30000)
+            page.wait_for_selector('[data-nonce]', timeout=25000)
+            nonce = page.locator('[data-nonce]').get_attribute('data-nonce')
+            with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"NONCE={nonce}\n")
+            browser.close()
+      - name: 下载安卓XAPK并校验合法性
         run: |
           FILE="upwork-2.16.0-arm64-v8a.xapk"
           curl -sL -c cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
           if ! file "$FILE" | grep -qE 'zip|archive|Android'; then
-            echo "FAIL: result is not a valid archive"
-            head -c 1500 "$FILE"
+            echo "FAIL: 安卓包下载损坏"
             exit 1
           fi
           ls -la "$FILE"
-      - name: 上传到GitHub Release
+      - name: 直接拉取Upwork桌面端5.8.0.46安装包
+        run: |
+          DESKTOP_FILE="UpworkSetup-5.8.0.46.exe"
+          curl -sL -A "$UA" "https://upwork-usw2-desktopapp.upwork.com/binaries/UpworkSetup-5.8.0.46.exe" -o "$DESKTOP_FILE"
+          if ! file "$DESKTOP_FILE" | grep -qE 'PE32|executable'; then
+            echo "FAIL: 桌面端安装包下载损坏"
+            exit 1
+          fi
+          ls -la "$DESKTOP_FILE"
+      - name: 自动上传双版本到GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          gh release create v1 upwork-2.16.0-arm64-v8a.xapk \
-          --title "Upwork 2.16.0 XAPK (arm64-v8a, Android 10+) from APKMirror" \
+          gh release create v1 upwork-2.16.0-arm64-v8a.xapk UpworkSetup-5.8.0.46.exe \
+          --title "Upwork 全版本官方安装包合集" \
           --repo "${{ github.repository }}" 2>/dev/null \
-          || gh release upload v1 upwork-2.16.0-arm64-v8a.xapk --repo "${{ github.repository }}" --clobber
+          || gh release upload v1 upwork-2.16.0-arm64-v8a.xapk UpworkSetup-5.8.0.46.exe --repo "${{ github.repository }}" --clobber
