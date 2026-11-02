@@ -1,47 +1,45 @@
-name: fetch-upwork-apk
-
-on:
-  workflow_dispatch:
-
+name: Fetch Upwork 2.16.0 Official XAPK
+on: workflow_dispatch:
 jobs:
-  fetch:
+  get-official-xapk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Download Upwork 2.16.0 XAPK from APKMirror
+      - name: 安装基础依赖
+        run: sudo apt update && sudo apt install -y wget curl gh
+      - name: 配置环境变量并抓取页面
         run: |
-          set -uo pipefail
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-          VARIANT="https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
-
-          echo "== step1: variant page, grab current button key =="
-          curl -sL -c cookies.txt -A "$UA" "$VARIANT" -o variant.html
-          BTNKEY=$(grep -oE 'download/\?key=[0-9a-f]+' variant.html | head -1 | sed 's|download/?key=||')
-          echo "BTNKEY=$BTNKEY"
-          [ -n "$BTNKEY" ] || { echo "FAIL: no button key in variant page"; head -c 2000 variant.html; exit 1; }
-
-          echo "== step2: interstitial, grab one-time nonce =="
-          curl -sL -b cookies.txt -c cookies.txt -A "$UA" "$VARIANT/download/?key=$BTNKEY" -o interstitial.html
-          NONCE=$(grep -oE 'download\.php\?id=[0-9]+(&amp;|&)key=[0-9a-f]+' interstitial.html | head -1 | sed 's/&amp;/\&/')
-          echo "NONCE=$NONCE"
-          [ -n "$NONCE" ] || { echo "FAIL: no nonce in interstitial"; head -c 2000 interstitial.html; exit 1; }
-
-          echo "== step3: fetch the actual file (follow CDN redirect) =="
-          FILE="upwork-2.16.0-arm64-v8a.xapk"
-          curl -sL -b cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
-          echo "== verify =="
-          file "$FILE"
-          ls -la "$FILE"
-          sha256sum "$FILE"
-          # must look like a zip/xapk, not an error page
-          if ! file "$FILE" | grep -qiE 'zip|android|archive'; then
-            echo "FAIL: result is not an archive:"; head -c 1500 "$FILE"; exit 1
+          echo "UA=$UA" >> $GITHUB_ENV
+          # 携带合法UA请求页面，避免被拦截
+          curl -s -A "$UA" "https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/" > page.html
+          # 适配最新页面结构的正则提取nonce
+          NONCE=$(grep -oP 'data-nonce="\K[a-zA-Z0-9]+' page.html | head -n 1)
+          # 容错处理，没匹配到也打印页面前200行方便排查，不直接硬退出
+          if [ -z "$NONCE" ]; then
+            echo "WARN: no nonce found, print page head"
+            head -n 200 page.html
+            exit 1
           fi
-
-      - name: Upload as release asset
+          echo "NONCE=$NONCE" >> $GITHUB_ENV
+      - name: 拉取正版XAPK文件
+        run: |
+          FILE="upwork-2.16.0-arm64-v8a.xapk"
+          curl -sL -c cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
+          # 校验文件合法性
+          if ! file "$FILE" | grep -qE 'zip|archive|Android'; then
+            echo "FAIL: result is not a valid archive"
+            head -c 1500 "$FILE"
+            exit 1
+          fi
+          ls -la "$FILE"
+      - name: 上传到GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           gh release create v1 upwork-2.16.0-arm64-v8a.xapk \
-             --title "Upwork 2.16.0 XAPK (arm64-v8a, Android 10+) from APKMirror" \
-             --repo "${{ github.repository }}" 2>/dev/null \
+          --title "Upwork 2.16.0 XAPK (arm64-v8a, Android 10+) from APKMirror" \
+          --repo "${{ github.repository }}" 2>/dev/null \
           || gh release upload v1 upwork-2.16.0-arm64-v8a.xapk --repo "${{ github.repository }}" --clobber
-          gh release view v1 --repo "${{ github.repository }}"
