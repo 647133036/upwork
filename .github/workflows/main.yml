@@ -1,3 +1,4 @@
+yaml
 name: fetch-upwork-official-packages
 
 on:
@@ -12,10 +13,11 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y curl file
-          pip install playwright
-          sudo python3 -m playwright install-deps chromium
-          python3 -m playwright install chromium
+          sudo apt-get install -y curl file python3-venv
+          python3 -m venv pw-venv
+          ./pw-venv/bin/pip install -q playwright
+          ./pw-venv/bin/python -m playwright install chromium
+          sudo ./pw-venv/bin/python -m playwright install-deps chromium
 
       - name: Fetch Upwork XAPK (curl chain, playwright fallback)
         run: |
@@ -55,51 +57,51 @@ jobs:
           # --- playwright fallback (real browser beats CF challenge) ---
           if [ ! -f "$FILE" ]; then
             echo "!! curl chain failed -> playwright fallback"
-            python3 - <<'PYEOF'
-          import sys, time
-          from playwright.sync_api import sync_playwright
+            ./pw-venv/bin/python - <<'PYEOF'
+import sys, time
+from playwright.sync_api import sync_playwright
 
-          VARIANT = "https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
-          FILE = "upwork-2.16.0-arm64-v8a.xapk"
+VARIANT = "https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
+FILE = "upwork-2.16.0-arm64-v8a.xapk"
 
-          with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            ctx = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                locale="en-US", viewport={"width": 1366, "height": 900})
-            page = ctx.new_page()
-            page.goto(VARIANT, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_selector("a.downloadButton", timeout=45000)
-            print("download button found; clicking")
-            page.click("a.downloadButton")
-            nonce_url = None
-            for _ in range(20):
-              for pg in ctx.pages:
-                try:
-                  loc = pg.locator("a[href*='download.php']").first
-                  if loc.count() > 0:
-                    nonce_url = loc.get_attribute("href")
-                    break
-                except Exception:
-                  pass
-              if nonce_url:
-                break
-              time.sleep(2)
-            if not nonce_url:
-              print("!! no nonce link; last page head:")
-              print(ctx.pages[-1].content()[:1000])
-              sys.exit(1)
-            print("nonce url:", nonce_url)
-            resp = ctx.request.get(nonce_url, timeout=300000)
-            print("file http:", resp.status)
-            if resp.status != 200:
-              print(resp.text()[:500]); sys.exit(1)
-            data = resp.body()
-            with open(FILE, "wb") as f:
-              f.write(data)
-            print("bytes:", len(data))
-            browser.close()
-          PYEOF
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    ctx = browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        locale="en-US", viewport={"width": 1366, "height": 900})
+    page = ctx.new_page()
+    page.goto(VARIANT, timeout=60000, wait_until="domcontentloaded")
+    page.wait_for_selector("a.downloadButton", timeout=45000)
+    print("download button found; clicking")
+    page.click("a.downloadButton")
+    nonce_url = None
+    for _ in range(20):
+      for pg in ctx.pages:
+        try:
+          loc = pg.locator("a[href*='download.php']").first
+          if loc.count() > 0:
+            nonce_url = loc.get_attribute("href")
+            break
+        except Exception:
+          pass
+      if nonce_url:
+        break
+      time.sleep(2)
+    if not nonce_url:
+      print("!! no nonce link; last page head:")
+      print(ctx.pages[-1].content()[:1000])
+      sys.exit(1)
+    print("nonce url:", nonce_url)
+    resp = ctx.request.get(nonce_url, timeout=300000)
+    print("file http:", resp.status)
+    if resp.status != 200:
+      print(resp.text()[:500]); sys.exit(1)
+    data = resp.body()
+    with open(FILE, "wb") as f:
+      f.write(data)
+    print("bytes:", len(data))
+    browser.close()
+PYEOF
           fi
 
           echo "== final check =="
