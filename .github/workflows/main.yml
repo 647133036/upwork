@@ -17,44 +17,64 @@ jobs:
           ./pw-venv/bin/pip install -q playwright
           ./pw-venv/bin/python -m playwright install chromium
 
-      - name: Fetch Upwork XAPK (curl chain, playwright fallback)
+      - name: Fetch android package (APKMirror -> APKPure -> Playwright)
         run: |
           set -uo pipefail
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
           VARIANT="https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
-          FILE="upwork-2.16.0-arm64-v8a.xapk"
+          ANDROID_OUT="upwork-2.16.0-arm64-v8a.xapk"
           CK="ck.txt"
 
-          # --- curl chain: variant -> button key -> interstitial -> nonce -> file ---
-          ok=$(curl -sL -c "$CK" -A "$UA" "$VARIANT" -o v.html -w "%{http_code}")
-          echo "variant page http=$ok"
+          # returns 0 if $1 is a real zip/apk (PK magic, >1MB)
+          goodfile() {
+            [ -f "$1" ] || return 1
+            [ "$(head -c 2 "$1" 2>/dev/null)" = "PK" ] || return 1
+            [ "$(stat -c%s "$1")" -gt 1000000 ]
+          }
+
+          # === source 1: APKMirror curl chain ===
+          ok=$(curl -sL -c "$CK" -A "$UA" "$VARIANT" -o v.html -w "%{http_code}" || true)
+          echo "am: variant page http=$ok"
           BTNKEY="" ; VURL="$VARIANT"
           if [ "$ok" = "200" ]; then
             VURL2=$(grep -oE 'https://www\.apkmirror\.com/apk/[^"]*-android-apk-download/' v.html | head -1)
             [ -n "$VURL2" ] && VURL="$VURL2"
-            ok2=$(curl -sL -c "$CK" -A "$UA" "$VURL" -o p.html -w "%{http_code}")
-            echo "variant2 http=$ok2 url=$VURL"
+            ok2=$(curl -sL -c "$CK" -A "$UA" "$VURL" -o p.html -w "%{http_code}" || true)
             [ "$ok2" = "200" ] && BTNKEY=$(grep -oE 'download/\?key=[0-9a-f]+' p.html | head -1 | sed 's|download/?key=||')
-            echo "button key: $BTNKEY"
+            echo "am: button key: $BTNKEY"
           fi
           NONCE=""
           if [ -n "$BTNKEY" ]; then
-            ok3=$(curl -sL -b "$CK" -c "$CK" -A "$UA" "$VURL/download/?key=$BTNKEY" -o i.html -w "%{http_code}")
-            echo "interstitial http=$ok3"
+            ok3=$(curl -sL -b "$CK" -c "$CK" -A "$UA" "$VURL/download/?key=$BTNKEY" -o i.html -w "%{http_code}" || true)
             [ "$ok3" = "200" ] && NONCE=$(grep -oE 'download\.php\?id=[0-9]+(&amp;|&)key=[0-9a-f]+' i.html | head -1 | sed 's/&amp;/\&/')
-            echo "nonce: $NONCE"
+            echo "am: nonce: $NONCE"
           fi
           if [ -n "$NONCE" ]; then
-            ok4=$(curl -sL -b "$CK" -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE" -w "%{http_code}")
-            echo "file http=$ok4"
-            if ! file "$FILE" | grep -qiE 'zip|android|archive'; then
-              echo "!! curl download not an archive; head:"; head -c 800 "$FILE"; echo; rm -f "$FILE"
-            fi
+            curl -sL -b "$CK" -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$ANDROID_OUT" || true
+            if goodfile "$ANDROID_OUT"; then echo "am: XAPK OK"; else echo "am: not a good file"; rm -f "$ANDROID_OUT"; fi
           fi
 
-          # --- playwright fallback: headed browser under xvfb (beats CF headless detection) ---
-          if [ ! -f "$FILE" ]; then
-            echo "!! curl chain failed -> playwright fallback (headed + xvfb)"
+          # === source 2: APKPure direct (usually open for US IPs, no CF) ===
+          if ! goodfile "$ANDROID_OUT"; then
+            echo "!! apkMirror failed -> APKPure direct"
+            for U in \
+              "https://d.apkpure.com/b/APK/com.upwork.android.apps.main?version=latest" \
+              "https://d.apkpure.com/b/APK/com.upwork.android.apps.main?version=2.16.0"; do
+              echo "ap: trying $U"
+              c=$(curl -sL -A "$UA" -H "Referer: https://apkpure.com/" "$U" -o tmp.apk -w "%{http_code}" || true)
+              echo "ap: http=$c bytes=$(stat -c%s tmp.apk 2>/dev/null || echo 0)"
+              if goodfile tmp.apk; then
+                mv tmp.apk upwork-official.apk
+                echo "ap: APK OK -> upwork-official.apk"
+                break
+              fi
+              rm -f tmp.apk
+            done
+          fi
+
+          # === source 3: playwright (headed under xvfb, CF reload loop) ===
+          if ! goodfile "$ANDROID_OUT" && [ ! -f upwork-official.apk ]; then
+            echo "!! all curl sources failed -> playwright last resort"
             Xvfb :99 -screen 0 1366x900x24 > xvfb.log 2>&1 &
             XVFB_PID=$!
             sleep 2
@@ -66,60 +86,75 @@ jobs:
             echo 'LWFuZHJvaWQtYXBrLWRvd25sb2FkLyIKRklMRSA9ICJ1cHdvcmstMi4xNi4wLWFybTY0LXY4YS54' >> pw.b64
             echo 'YXBrIgpTRUxFQ1RPUlMgPSBbImEuZG93bmxvYWRCdXR0b24iLCAiYS5idG4tYmxvY2siLCAiYS5i' >> pw.b64
             echo 'dG4iLCAnYnV0dG9uOmhhcy10ZXh0KCJEb3dubG9hZCIpJywgJ2E6aGFzLXRleHQoIkRvd25sb2Fk' >> pw.b64
-            echo 'IiknXQoKZGVmIGR1bXAocGcsIGxhYmVsKToKICAgIHRyeToKICAgICAgICBodG1sID0gcGcuY29u' >> pw.b64
-            echo 'dGVudCgpCiAgICAgICAgcHJpbnQoZiItLS0ge2xhYmVsfSB0aXRsZT17cGcudGl0bGUoKSFyfSB1' >> pw.b64
-            echo 'cmw9e3BnLnVybH0iKQogICAgICAgIHByaW50KGh0bWxbOjI1MDBdKQogICAgICAgIGlmIHJlLnNl' >> pw.b64
-            echo 'YXJjaChyIihjZi18Y2hhbGxlbmdlfGp1c3QgYSBtb21lbnR8YXR0ZW50aW9uIHJlcXVpcmVkfGVu' >> pw.b64
-            echo 'YWJsZSBqYXZhc2NyaXB0fHR1cm5zdGlsZXxjYXB0Y2hhKSIsIGh0bWwsIHJlLkkpOgogICAgICAg' >> pw.b64
-            echo 'ICAgICBwcmludCgiISEgQ0YtQ0hBTExFTkdFLURFVEVDVEVEIikKICAgIGV4Y2VwdCBFeGNlcHRp' >> pw.b64
-            echo 'b24gYXMgZToKICAgICAgICBwcmludCgiZHVtcCBlcnIiLCBlKQoKd2l0aCBzeW5jX3BsYXl3cmln' >> pw.b64
-            echo 'aHQoKSBhcyBwOgogICAgYXJncyA9IFsiLS1kaXNhYmxlLWJsaW5rLWZlYXR1cmVzPUF1dG9tYXRp' >> pw.b64
-            echo 'b25Db250cm9sbGVkIiwgIi0tbm8tc2FuZGJveCIsICItLWRpc2FibGUtZGV2LXNobS11c2FnZSJd' >> pw.b64
-            echo 'CiAgICB0cnk6CiAgICAgICAgYnJvd3NlciA9IHAuY2hyb21pdW0ubGF1bmNoKGhlYWRsZXNzPUZh' >> pw.b64
-            echo 'bHNlLCBhcmdzPWFyZ3MpCiAgICAgICAgcHJpbnQoImxhdW5jaGVkIEhFQURFRCAoRElTUExBWT0l' >> pw.b64
-            echo 'cykiICUgX19pbXBvcnRfXygib3MiKS5lbnZpcm9uLmdldCgiRElTUExBWSIsIiIpKQogICAgZXhj' >> pw.b64
-            echo 'ZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHByaW50KCJoZWFkZWQgbGF1bmNoIGZhaWxlZCAo' >> pw.b64
-            echo 'JXMpIC0+IGhlYWRsZXNzIiAlIGUpCiAgICAgICAgYnJvd3NlciA9IHAuY2hyb21pdW0ubGF1bmNo' >> pw.b64
-            echo 'KGhlYWRsZXNzPVRydWUsIGFyZ3M9YXJncykKICAgICAgICBwcmludCgibGF1bmNoZWQgSEVBRExF' >> pw.b64
-            echo 'U1MiKQogICAgY3R4ID0gYnJvd3Nlci5uZXdfY29udGV4dCgKICAgICAgICB1c2VyX2FnZW50PSJN' >> pw.b64
-            echo 'b3ppbGxhLzUuMCAoV2luZG93cyBOVCAxMC4wOyBXaW42NDsgeDY0KSBBcHBsZVdlYktpdC81Mzcu' >> pw.b64
-            echo 'MzYgKEtIVE1MLCBsaWtlIEdlY2tvKSBDaHJvbWUvMTMxLjAuMC4wIFNhZmFyaS81MzcuMzYiLAog' >> pw.b64
-            echo 'ICAgICAgIGxvY2FsZT0iZW4tVVMiLCB2aWV3cG9ydD17IndpZHRoIjogMTM2NiwgImhlaWdodCI6' >> pw.b64
-            echo 'IDkwMH0sIHRpbWV6b25lX2lkPSJBbWVyaWNhL05ld19Zb3JrIikKICAgIGN0eC5hZGRfaW5pdF9z' >> pw.b64
-            echo 'Y3JpcHQoIk9iamVjdC5kZWZpbmVQcm9wZXJ0eShuYXZpZ2F0b3IsJ3dlYmRyaXZlcicse2dldDoo' >> pw.b64
-            echo 'KT0+dW5kZWZpbmVkfSkiKQogICAgcGFnZSA9IGN0eC5uZXdfcGFnZSgpCiAgICBwYWdlLmdvdG8o' >> pw.b64
-            echo 'VkFSSUFOVCwgdGltZW91dD05MDAwMCwgd2FpdF91bnRpbD0iZG9tY29udGVudGxvYWRlZCIpCgog' >> pw.b64
-            echo 'ICAgZm91bmQgPSBOb25lCiAgICBkZWFkbGluZSA9IHRpbWUudGltZSgpICsgMTIwCiAgICB3aGls' >> pw.b64
-            echo 'ZSB0aW1lLnRpbWUoKSA8IGRlYWRsaW5lOgogICAgICAgIGZvciBzZWwgaW4gU0VMRUNUT1JTOgog' >> pw.b64
-            echo 'ICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICBsb2MgPSBwYWdlLmxvY2F0b3Ioc2VsKQog' >> pw.b64
-            echo 'ICAgICAgICAgICAgICAgaWYgbG9jLmNvdW50KCkgPiAwIGFuZCBsb2MuZmlyc3QuaXNfdmlzaWJs' >> pw.b64
-            echo 'ZSgpOgogICAgICAgICAgICAgICAgICAgIGZvdW5kID0gc2VsCiAgICAgICAgICAgICAgICAgICAg' >> pw.b64
-            echo 'YnJlYWsKICAgICAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgICAgIHBhc3MK' >> pw.b64
-            echo 'ICAgICAgICBpZiBmb3VuZDoKICAgICAgICAgICAgYnJlYWsKICAgICAgICB0aW1lLnNsZWVwKDMp' >> pw.b64
-            echo 'CgogICAgaWYgbm90IGZvdW5kOgogICAgICAgIGR1bXAocGFnZSwgIk5PLUJVVFRPTiIpCiAgICAg' >> pw.b64
-            echo 'ICAgZm9yIHBnIGluIGN0eC5wYWdlc1sxOl06CiAgICAgICAgICAgIGR1bXAocGcsICJQQUdFIikK' >> pw.b64
-            echo 'ICAgICAgICBwcmludCgiISEgbm8gZG93bmxvYWQgYnV0dG9uOyBnaXZpbmcgdXAiKQogICAgICAg' >> pw.b64
-            echo 'IGJyb3dzZXIuY2xvc2UoKQogICAgICAgIHN5cy5leGl0KDEpCgogICAgcHJpbnQoImJ1dHRvbiBz' >> pw.b64
-            echo 'ZWxlY3RvcjoiLCBmb3VuZCwgImNsaWNraW5nIikKICAgIHBhZ2UubG9jYXRvcihmb3VuZCkuY2xp' >> pw.b64
-            echo 'Y2soKQogICAgdGltZS5zbGVlcCgzKQoKICAgIG5vbmNlX3VybCA9IE5vbmUKICAgIGZvciBfIGlu' >> pw.b64
-            echo 'IHJhbmdlKDQwKToKICAgICAgICBmb3IgcGcgaW4gY3R4LnBhZ2VzOgogICAgICAgICAgICB0cnk6' >> pw.b64
-            echo 'CiAgICAgICAgICAgICAgICBsb2MgPSBwZy5sb2NhdG9yKCJhW2hyZWYqPSdkb3dubG9hZC5waHAn' >> pw.b64
-            echo 'XSIpLmZpcnN0CiAgICAgICAgICAgICAgICBpZiBsb2MuY291bnQoKSA+IDA6CiAgICAgICAgICAg' >> pw.b64
-            echo 'ICAgICAgICAgbm9uY2VfdXJsID0gbG9jLmdldF9hdHRyaWJ1dGUoImhyZWYiKQogICAgICAgICAg' >> pw.b64
-            echo 'ICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAg' >> pw.b64
-            echo 'ICAgICBwYXNzCiAgICAgICAgaWYgbm9uY2VfdXJsOgogICAgICAgICAgICBicmVhawogICAgICAg' >> pw.b64
-            echo 'IHRpbWUuc2xlZXAoMikKCiAgICBpZiBub3Qgbm9uY2VfdXJsOgogICAgICAgIGZvciBwZyBpbiBj' >> pw.b64
-            echo 'dHgucGFnZXM6CiAgICAgICAgICAgIGR1bXAocGcsICJOT05DRSIpCiAgICAgICAgcHJpbnQoIiEh' >> pw.b64
-            echo 'IG5vIG5vbmNlIGxpbmsiKQogICAgICAgIGJyb3dzZXIuY2xvc2UoKQogICAgICAgIHN5cy5leGl0' >> pw.b64
-            echo 'KDEpCgogICAgcHJpbnQoIm5vbmNlIHVybDoiLCBub25jZV91cmwpCiAgICByZXNwID0gY3R4LnJl' >> pw.b64
-            echo 'cXVlc3QuZ2V0KG5vbmNlX3VybCwgdGltZW91dD0zMDAwMDApCiAgICBwcmludCgiZmlsZSBodHRw' >> pw.b64
-            echo 'OiIsIHJlc3Auc3RhdHVzLCAiY29udGVudC10eXBlOiIsIHJlc3AuaGVhZGVycy5nZXQoImNvbnRl' >> pw.b64
-            echo 'bnQtdHlwZSIpKQogICAgaWYgcmVzcC5zdGF0dXMgIT0gMjAwOgogICAgICAgIHByaW50KHJlc3Au' >> pw.b64
-            echo 'dGV4dCgpWzo1MDBdKQogICAgICAgIGJyb3dzZXIuY2xvc2UoKQogICAgICAgIHN5cy5leGl0KDEp' >> pw.b64
-            echo 'CiAgICBkYXRhID0gcmVzcC5ib2R5KCkKICAgIHdpdGggb3BlbihGSUxFLCAid2IiKSBhcyBmOgog' >> pw.b64
-            echo 'ICAgICAgIGYud3JpdGUoZGF0YSkKICAgIHByaW50KCJieXRlczoiLCBsZW4oZGF0YSksICJtYWdp' >> pw.b64
-            echo 'YzoiLCBkYXRhWzoyXSkKICAgIGlmIGRhdGFbOjJdICE9IGIiUEsiOgogICAgICAgIHByaW50KCIh' >> pw.b64
-            echo 'ISBub3QgYSB6aXAgYXJjaGl2ZSIpCiAgICBicm93c2VyLmNsb3NlKCkK' >> pw.b64
+            echo 'IiknXQoKZGVmIGlzX2NmKHBnKToKICAgIHRyeToKICAgICAgICB0ID0gcGcudGl0bGUoKSBvciAi' >> pw.b64
+            echo 'IgogICAgICAgIGlmICJqdXN0IGEgbW9tZW50IiBpbiB0Lmxvd2VyKCk6CiAgICAgICAgICAgIHJl' >> pw.b64
+            echo 'dHVybiBUcnVlCiAgICAgICAgaCA9IHBnLmNvbnRlbnQoKVs6MTUwMF0KICAgICAgICByZXR1cm4g' >> pw.b64
+            echo 'Ym9vbChyZS5zZWFyY2gociJjZi18Y2hhbGxlbmdlfGp1c3QgYSBtb21lbnR8dHVybnN0aWxlfGNh' >> pw.b64
+            echo 'cHRjaGEiLCBoLCByZS5JKSkKICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgcmV0dXJuIEZh' >> pw.b64
+            echo 'bHNlCgpkZWYgZHVtcChwZywgbGFiZWwpOgogICAgdHJ5OgogICAgICAgIGggPSBwZy5jb250ZW50' >> pw.b64
+            echo 'KCkKICAgICAgICBwcmludChmIi0tLSB7bGFiZWx9IHRpdGxlPXsocGcudGl0bGUoKSBvciAnJykh' >> pw.b64
+            echo 'cn0gdXJsPXtwZy51cmx9IikKICAgICAgICBwcmludChoWzoyMDAwXSkKICAgIGV4Y2VwdCBFeGNl' >> pw.b64
+            echo 'cHRpb24gYXMgZToKICAgICAgICBwcmludCgiZHVtcCBlcnIiLCBlKQoKd2l0aCBzeW5jX3BsYXl3' >> pw.b64
+            echo 'cmlnaHQoKSBhcyBwOgogICAgYXJncyA9IFsiLS1kaXNhYmxlLWJsaW5rLWZlYXR1cmVzPUF1dG9t' >> pw.b64
+            echo 'YXRpb25Db250cm9sbGVkIiwgIi0tbm8tc2FuZGJveCIsICItLWRpc2FibGUtZGV2LXNobS11c2Fn' >> pw.b64
+            echo 'ZSJdCiAgICBsYXVuY2hlZCA9IEZhbHNlCiAgICBmb3IgY2hhbiBpbiAoImNocm9tZSIsIE5vbmUp' >> pw.b64
+            echo 'OgogICAgICAgIHRyeToKICAgICAgICAgICAgaWYgY2hhbjoKICAgICAgICAgICAgICAgIGJyb3dz' >> pw.b64
+            echo 'ZXIgPSBwLmNocm9taXVtLmxhdW5jaChjaGFubmVsPWNoYW4sIGhlYWRsZXNzPUZhbHNlLCBhcmdz' >> pw.b64
+            echo 'PWFyZ3MpCiAgICAgICAgICAgIGVsc2U6CiAgICAgICAgICAgICAgICBicm93c2VyID0gcC5jaHJv' >> pw.b64
+            echo 'bWl1bS5sYXVuY2goaGVhZGxlc3M9RmFsc2UsIGFyZ3M9YXJncykKICAgICAgICAgICAgcHJpbnQo' >> pw.b64
+            echo 'ImxhdW5jaGVkIEhFQURFRCBjaGFubmVsPSVzIERJU1BMQVk9JXMiICUgKGNoYW4sIF9faW1wb3J0' >> pw.b64
+            echo 'X18oIm9zIikuZW52aXJvbi5nZXQoIkRJU1BMQVkiLCIiKSkpCiAgICAgICAgICAgIGxhdW5jaGVk' >> pw.b64
+            echo 'ID0gVHJ1ZQogICAgICAgICAgICBicmVhawogICAgICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToK' >> pw.b64
+            echo 'ICAgICAgICAgICAgcHJpbnQoImxhdW5jaCBjaGFubmVsPSVzIGZhaWxlZDogJXMiICUgKGNoYW4s' >> pw.b64
+            echo 'IGUpKQogICAgaWYgbm90IGxhdW5jaGVkOgogICAgICAgIGJyb3dzZXIgPSBwLmNocm9taXVtLmxh' >> pw.b64
+            echo 'dW5jaChoZWFkbGVzcz1UcnVlLCBhcmdzPWFyZ3MpCiAgICAgICAgcHJpbnQoImxhdW5jaGVkIEhF' >> pw.b64
+            echo 'QURMRVNTIChubyBkaXNwbGF5KSIpCiAgICBjdHggPSBicm93c2VyLm5ld19jb250ZXh0KAogICAg' >> pw.b64
+            echo 'ICAgIHVzZXJfYWdlbnQ9Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQp' >> pw.b64
+            echo 'IEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMzEuMC4wLjAg' >> pw.b64
+            echo 'U2FmYXJpLzUzNy4zNiIsCiAgICAgICAgbG9jYWxlPSJlbi1VUyIsIHZpZXdwb3J0PXsid2lkdGgi' >> pw.b64
+            echo 'OiAxMzY2LCAiaGVpZ2h0IjogOTAwfSwgdGltZXpvbmVfaWQ9IkFtZXJpY2EvTmV3X1lvcmsiKQog' >> pw.b64
+            echo 'ICAgY3R4LmFkZF9pbml0X3NjcmlwdCgiT2JqZWN0LmRlZmluZVByb3BlcnR5KG5hdmlnYXRvciwn' >> pw.b64
+            echo 'd2ViZHJpdmVyJyx7Z2V0OigpPT51bmRlZmluZWR9KSIpCiAgICBwYWdlID0gY3R4Lm5ld19wYWdl' >> pw.b64
+            echo 'KCkKICAgIHBhZ2UuZ290byhWQVJJQU5ULCB0aW1lb3V0PTkwMDAwLCB3YWl0X3VudGlsPSJkb21j' >> pw.b64
+            echo 'b250ZW50bG9hZGVkIikKCiAgICAjIGJlYXQgQ0YgbWFuYWdlZCBjaGFsbGVuZ2U6IGdpdmUgaXQg' >> pw.b64
+            echo 'dGltZSwgdGhlbiByZWxvYWQgYSBmZXcgdGltZXMKICAgIGZvciBpIGluIHJhbmdlKDEwKToKICAg' >> pw.b64
+            echo 'ICAgICBpZiBub3QgaXNfY2YocGFnZSk6CiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgcHJpbnQo' >> pw.b64
+            echo 'ZiJDRiBjaGFsbGVuZ2UgYXR0ZW1wdCB7aSsxfTogd2FpdGluZytyZWxvYWQiKQogICAgICAgIHRp' >> pw.b64
+            echo 'bWUuc2xlZXAoMTgpCiAgICAgICAgdHJ5OgogICAgICAgICAgICBwYWdlLnJlbG9hZCh0aW1lb3V0' >> pw.b64
+            echo 'PTMwMDAwLCB3YWl0X3VudGlsPSJkb21jb250ZW50bG9hZGVkIikKICAgICAgICBleGNlcHQgRXhj' >> pw.b64
+            echo 'ZXB0aW9uOgogICAgICAgICAgICBwYXNzCiAgICBpZiBpc19jZihwYWdlKToKICAgICAgICBkdW1w' >> pw.b64
+            echo 'KHBhZ2UsICJTVElMTC1DRiIpCiAgICAgICAgcHJpbnQoIiEhIENGIGNoYWxsZW5nZSBub3QgY2xl' >> pw.b64
+            echo 'YXJlZCIpCgogICAgZm91bmQgPSBOb25lCiAgICBkZWFkbGluZSA9IHRpbWUudGltZSgpICsgMTIw' >> pw.b64
+            echo 'CiAgICB3aGlsZSB0aW1lLnRpbWUoKSA8IGRlYWRsaW5lOgogICAgICAgIGZvciBzZWwgaW4gU0VM' >> pw.b64
+            echo 'RUNUT1JTOgogICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICBsb2MgPSBwYWdlLmxvY2F0' >> pw.b64
+            echo 'b3Ioc2VsKQogICAgICAgICAgICAgICAgaWYgbG9jLmNvdW50KCkgPiAwIGFuZCBsb2MuZmlyc3Qu' >> pw.b64
+            echo 'aXNfdmlzaWJsZSgpOgogICAgICAgICAgICAgICAgICAgIGZvdW5kID0gc2VsCiAgICAgICAgICAg' >> pw.b64
+            echo 'ICAgICAgICAgYnJlYWsKICAgICAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAg' >> pw.b64
+            echo 'ICAgIHBhc3MKICAgICAgICBpZiBmb3VuZDoKICAgICAgICAgICAgYnJlYWsKICAgICAgICB0aW1l' >> pw.b64
+            echo 'LnNsZWVwKDMpCgogICAgaWYgbm90IGZvdW5kOgogICAgICAgIGZvciBwZyBpbiBjdHgucGFnZXM6' >> pw.b64
+            echo 'CiAgICAgICAgICAgIGR1bXAocGcsICJOTy1CVVRUT04iKQogICAgICAgIHByaW50KCIhISBubyBk' >> pw.b64
+            echo 'b3dubG9hZCBidXR0b247IGdpdmluZyB1cCIpCiAgICAgICAgYnJvd3Nlci5jbG9zZSgpCiAgICAg' >> pw.b64
+            echo 'ICAgc3lzLmV4aXQoMSkKCiAgICBwcmludCgiYnV0dG9uIHNlbGVjdG9yOiIsIGZvdW5kLCAiY2xp' >> pw.b64
+            echo 'Y2tpbmciKQogICAgcGFnZS5sb2NhdG9yKGZvdW5kKS5jbGljaygpCiAgICB0aW1lLnNsZWVwKDMp' >> pw.b64
+            echo 'CgogICAgbm9uY2VfdXJsID0gTm9uZQogICAgZm9yIF8gaW4gcmFuZ2UoNDApOgogICAgICAgIGZv' >> pw.b64
+            echo 'ciBwZyBpbiBjdHgucGFnZXM6CiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIGxvYyA9' >> pw.b64
+            echo 'IHBnLmxvY2F0b3IoImFbaHJlZio9J2Rvd25sb2FkLnBocCddIikuZmlyc3QKICAgICAgICAgICAg' >> pw.b64
+            echo 'ICAgIGlmIGxvYy5jb3VudCgpID4gMDoKICAgICAgICAgICAgICAgICAgICBub25jZV91cmwgPSBs' >> pw.b64
+            echo 'b2MuZ2V0X2F0dHJpYnV0ZSgiaHJlZiIpCiAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAg' >> pw.b64
+            echo 'ICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgICAgIHBhc3MKICAgICAgICBpZiBu' >> pw.b64
+            echo 'b25jZV91cmw6CiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgdGltZS5zbGVlcCgyKQoKICAgIGlm' >> pw.b64
+            echo 'IG5vdCBub25jZV91cmw6CiAgICAgICAgZm9yIHBnIGluIGN0eC5wYWdlczoKICAgICAgICAgICAg' >> pw.b64
+            echo 'ZHVtcChwZywgIk5PTkNFIikKICAgICAgICBwcmludCgiISEgbm8gbm9uY2UgbGluayIpCiAgICAg' >> pw.b64
+            echo 'ICAgYnJvd3Nlci5jbG9zZSgpCiAgICAgICAgc3lzLmV4aXQoMSkKCiAgICBwcmludCgibm9uY2Ug' >> pw.b64
+            echo 'dXJsOiIsIG5vbmNlX3VybCkKICAgIHJlc3AgPSBjdHgucmVxdWVzdC5nZXQobm9uY2VfdXJsLCB0' >> pw.b64
+            echo 'aW1lb3V0PTMwMDAwMCkKICAgIHByaW50KCJmaWxlIGh0dHA6IiwgcmVzcC5zdGF0dXMsICJjdDoi' >> pw.b64
+            echo 'LCByZXNwLmhlYWRlcnMuZ2V0KCJjb250ZW50LXR5cGUiKSkKICAgIGlmIHJlc3Auc3RhdHVzICE9' >> pw.b64
+            echo 'IDIwMDoKICAgICAgICBwcmludChyZXNwLnRleHQoKVs6NTAwXSkKICAgICAgICBicm93c2VyLmNs' >> pw.b64
+            echo 'b3NlKCkKICAgICAgICBzeXMuZXhpdCgxKQogICAgZGF0YSA9IHJlc3AuYm9keSgpCiAgICB3aXRo' >> pw.b64
+            echo 'IG9wZW4oRklMRSwgIndiIikgYXMgZjoKICAgICAgICBmLndyaXRlKGRhdGEpCiAgICBwcmludCgi' >> pw.b64
+            echo 'Ynl0ZXM6IiwgbGVuKGRhdGEpLCAibWFnaWM6IiwgZGF0YVs6Ml0pCiAgICBpZiBkYXRhWzoyXSAh' >> pw.b64
+            echo 'PSBiIlBLIjoKICAgICAgICBwcmludCgiISEgbm90IGEgemlwIGFyY2hpdmUiKQogICAgYnJvd3Nl' >> pw.b64
+            echo 'ci5jbG9zZSgpCg==' >> pw.b64
             ./pw-venv/bin/python -c "import base64; open('pw_fetch.py','wb').write(base64.b64decode(open('pw.b64').read()))"
             ./pw-venv/bin/python pw_fetch.py
             RC=$?
@@ -128,15 +163,24 @@ jobs:
           fi
 
           echo "== final check =="
-          file "$FILE" ; ls -la "$FILE" ; sha256sum "$FILE"
-          file "$FILE" | grep -qiE 'zip|android|archive' || { echo "FATAL: XAPK not obtained"; exit 1; }
+          if [ -f upwork-official.apk ]; then
+            echo "android package: upwork-official.apk"
+            file upwork-official.apk; ls -la upwork-official.apk; sha256sum upwork-official.apk
+          fi
+          if [ -f "$ANDROID_OUT" ]; then
+            echo "android package: $ANDROID_OUT"
+            file "$ANDROID_OUT"; ls -la "$ANDROID_OUT"; sha256sum "$ANDROID_OUT"
+          fi
+          if [ ! -f upwork-official.apk ] && [ ! -f "$ANDROID_OUT" ]; then
+            echo "FATAL: no android package obtained"; exit 1
+          fi
 
       - name: Fetch desktop installer 5.8.0.46 (non-fatal)
         run: |
           set -uo pipefail
           URL="https://upwork-usw2-desktopapp.upwork.com/binaries/v5_8_0_46_d1c5f9d56c7f41ff/UpworkSetup64.exe"
           FILE="Upwork-5.8.0.46-win64.exe"
-          code=$(curl -sL -A "Mozilla/5.0" "$URL" -o "$FILE" -w "%{http_code}")
+          code=$(curl -sL -A "Mozilla/5.0" "$URL" -o "$FILE" -w "%{http_code}" || true)
           echo "http=$code"
           if [ "$code" = "200" ] && file "$FILE" | grep -qE 'PE32|executable'; then
             ls -la "$FILE"; sha256sum "$FILE"
@@ -150,12 +194,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          FILES=$(ls upwork-2.16.0-arm64-v8a.xapk Upwork-5.8.0.46-win64.exe 2>/dev/null || true)
+          FILES=""
+          if [ -f upwork-official.apk ]; then FILES="$FILES upwork-official.apk"; fi
+          if [ -f upwork-2.16.0-arm64-v8a.xapk ]; then FILES="$FILES upwork-2.16.0-arm64-v8a.xapk"; fi
+          if [ -f Upwork-5.8.0.46-win64.exe ]; then FILES="$FILES Upwork-5.8.0.46-win64.exe"; fi
           echo "uploading: $FILES"
           [ -n "$FILES" ] || { echo "nothing to upload"; exit 1; }
           gh release delete v1 --yes 2>/dev/null || true
           gh release create v1 $FILES \
-             --title "Upwork 2.16.0 XAPK + desktop 5.8.0.46 (official)" \
+             --title "Upwork android + desktop 5.8.0.46 (official)" \
              --repo "${{ github.repository }}"
           gh release view v1 --repo "${{ github.repository }}"
-
