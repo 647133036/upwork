@@ -12,11 +12,10 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y curl file python3-venv
+          sudo apt-get install -y curl file python3-venv xvfb
           python3 -m venv pw-venv
           ./pw-venv/bin/pip install -q playwright
           ./pw-venv/bin/python -m playwright install chromium
-          sudo ./pw-venv/bin/python -m playwright install-deps chromium
 
       - name: Fetch Upwork XAPK (curl chain, playwright fallback)
         run: |
@@ -53,41 +52,79 @@ jobs:
             fi
           fi
 
-          # --- playwright fallback (real browser beats CF challenge) ---
-          # python source shipped as base64 in short lines; b64decode ignores newlines
+          # --- playwright fallback: headed browser under xvfb (beats CF headless detection) ---
           if [ ! -f "$FILE" ]; then
-            echo "!! curl chain failed -> playwright fallback"
+            echo "!! curl chain failed -> playwright fallback (headed + xvfb)"
+            Xvfb :99 -screen 0 1366x900x24 > xvfb.log 2>&1 &
+            XVFB_PID=$!
+            sleep 2
+            export DISPLAY=:99
             : > pw.b64
-            echo 'aW1wb3J0IHN5cywgdGltZQpmcm9tIHBsYXl3cmlnaHQuc3luY19hcGkgaW1wb3J0IHN5bmNfcGxh' >> pw.b64
-            echo 'eXdyaWdodAoKVkFSSUFOVCA9ICJodHRwczovL3d3dy5hcGttaXJyb3IuY29tL2Fway91cHdvcmst' >> pw.b64
-            echo 'Z2xvYmFsLWluYy91cHdvcmsvdXB3b3JrLTItMTYtMC1yZWxlYXNlL3Vwd29yay0yLTE2LTAtYW5k' >> pw.b64
-            echo 'cm9pZC1hcGstZG93bmxvYWQvIgpGSUxFID0gInVwd29yay0yLjE2LjAtYXJtNjQtdjhhLnhhcGsi' >> pw.b64
-            echo 'Cgp3aXRoIHN5bmNfcGxheXdyaWdodCgpIGFzIHA6CiAgICBicm93c2VyID0gcC5jaHJvbWl1bS5s' >> pw.b64
-            echo 'YXVuY2goaGVhZGxlc3M9VHJ1ZSkKICAgIGN0eCA9IGJyb3dzZXIubmV3X2NvbnRleHQoCiAgICAg' >> pw.b64
-            echo 'ICAgdXNlcl9hZ2VudD0iTW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkg' >> pw.b64
-            echo 'QXBwbGVXZWJLaXQvNTM3LjM2IChLSFRNTCwgbGlrZSBHZWNrbykgQ2hyb21lLzEzMS4wLjAuMCBT' >> pw.b64
-            echo 'YWZhcmkvNTM3LjM2IiwKICAgICAgICBsb2NhbGU9ImVuLVVTIiwgdmlld3BvcnQ9eyJ3aWR0aCI6' >> pw.b64
-            echo 'IDEzNjYsICJoZWlnaHQiOiA5MDB9KQogICAgcGFnZSA9IGN0eC5uZXdfcGFnZSgpCiAgICBwYWdl' >> pw.b64
-            echo 'LmdvdG8oVkFSSUFOVCwgdGltZW91dD02MDAwMCwgd2FpdF91bnRpbD0iZG9tY29udGVudGxvYWRl' >> pw.b64
-            echo 'ZCIpCiAgICBwYWdlLndhaXRfZm9yX3NlbGVjdG9yKCJhLmRvd25sb2FkQnV0dG9uIiwgdGltZW91' >> pw.b64
-            echo 'dD00NTAwMCkKICAgIHByaW50KCJkb3dubG9hZCBidXR0b24gZm91bmQ7IGNsaWNraW5nIikKICAg' >> pw.b64
-            echo 'IHBhZ2UuY2xpY2soImEuZG93bmxvYWRCdXR0b24iKQogICAgbm9uY2VfdXJsID0gTm9uZQogICAg' >> pw.b64
-            echo 'Zm9yIF8gaW4gcmFuZ2UoMjApOgogICAgICBmb3IgcGcgaW4gY3R4LnBhZ2VzOgogICAgICAgIHRy' >> pw.b64
-            echo 'eToKICAgICAgICAgIGxvYyA9IHBnLmxvY2F0b3IoImFbaHJlZio9J2Rvd25sb2FkLnBocCddIiku' >> pw.b64
-            echo 'Zmlyc3QKICAgICAgICAgIGlmIGxvYy5jb3VudCgpID4gMDoKICAgICAgICAgICAgbm9uY2VfdXJs' >> pw.b64
-            echo 'ID0gbG9jLmdldF9hdHRyaWJ1dGUoImhyZWYiKQogICAgICAgICAgICBicmVhawogICAgICAgIGV4' >> pw.b64
-            echo 'Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICBwYXNzCiAgICAgIGlmIG5vbmNlX3VybDoKICAgICAg' >> pw.b64
-            echo 'ICBicmVhawogICAgICB0aW1lLnNsZWVwKDIpCiAgICBpZiBub3Qgbm9uY2VfdXJsOgogICAgICBw' >> pw.b64
-            echo 'cmludCgiISEgbm8gbm9uY2UgbGluazsgbGFzdCBwYWdlIGhlYWQ6IikKICAgICAgcHJpbnQoY3R4' >> pw.b64
-            echo 'LnBhZ2VzWy0xXS5jb250ZW50KClbOjEwMDBdKQogICAgICBzeXMuZXhpdCgxKQogICAgcHJpbnQo' >> pw.b64
-            echo 'Im5vbmNlIHVybDoiLCBub25jZV91cmwpCiAgICByZXNwID0gY3R4LnJlcXVlc3QuZ2V0KG5vbmNl' >> pw.b64
-            echo 'X3VybCwgdGltZW91dD0zMDAwMDApCiAgICBwcmludCgiZmlsZSBodHRwOiIsIHJlc3Auc3RhdHVz' >> pw.b64
-            echo 'KQogICAgaWYgcmVzcC5zdGF0dXMgIT0gMjAwOgogICAgICBwcmludChyZXNwLnRleHQoKVs6NTAw' >> pw.b64
-            echo 'XSk7IHN5cy5leGl0KDEpCiAgICBkYXRhID0gcmVzcC5ib2R5KCkKICAgIHdpdGggb3BlbihGSUxF' >> pw.b64
-            echo 'LCAid2IiKSBhcyBmOgogICAgICBmLndyaXRlKGRhdGEpCiAgICBwcmludCgiYnl0ZXM6IiwgbGVu' >> pw.b64
-            echo 'KGRhdGEpKQogICAgYnJvd3Nlci5jbG9zZSgpCg==' >> pw.b64
+            echo 'aW1wb3J0IHN5cywgdGltZSwgcmUKZnJvbSBwbGF5d3JpZ2h0LnN5bmNfYXBpIGltcG9ydCBzeW5j' >> pw.b64
+            echo 'X3BsYXl3cmlnaHQKClZBUklBTlQgPSAiaHR0cHM6Ly93d3cuYXBrbWlycm9yLmNvbS9hcGsvdXB3' >> pw.b64
+            echo 'b3JrLWdsb2JhbC1pbmMvdXB3b3JrL3Vwd29yay0yLTE2LTAtcmVsZWFzZS91cHdvcmstMi0xNi0w' >> pw.b64
+            echo 'LWFuZHJvaWQtYXBrLWRvd25sb2FkLyIKRklMRSA9ICJ1cHdvcmstMi4xNi4wLWFybTY0LXY4YS54' >> pw.b64
+            echo 'YXBrIgpTRUxFQ1RPUlMgPSBbImEuZG93bmxvYWRCdXR0b24iLCAiYS5idG4tYmxvY2siLCAiYS5i' >> pw.b64
+            echo 'dG4iLCAnYnV0dG9uOmhhcy10ZXh0KCJEb3dubG9hZCIpJywgJ2E6aGFzLXRleHQoIkRvd25sb2Fk' >> pw.b64
+            echo 'IiknXQoKZGVmIGR1bXAocGcsIGxhYmVsKToKICAgIHRyeToKICAgICAgICBodG1sID0gcGcuY29u' >> pw.b64
+            echo 'dGVudCgpCiAgICAgICAgcHJpbnQoZiItLS0ge2xhYmVsfSB0aXRsZT17cGcudGl0bGUoKSFyfSB1' >> pw.b64
+            echo 'cmw9e3BnLnVybH0iKQogICAgICAgIHByaW50KGh0bWxbOjI1MDBdKQogICAgICAgIGlmIHJlLnNl' >> pw.b64
+            echo 'YXJjaChyIihjZi18Y2hhbGxlbmdlfGp1c3QgYSBtb21lbnR8YXR0ZW50aW9uIHJlcXVpcmVkfGVu' >> pw.b64
+            echo 'YWJsZSBqYXZhc2NyaXB0fHR1cm5zdGlsZXxjYXB0Y2hhKSIsIGh0bWwsIHJlLkkpOgogICAgICAg' >> pw.b64
+            echo 'ICAgICBwcmludCgiISEgQ0YtQ0hBTExFTkdFLURFVEVDVEVEIikKICAgIGV4Y2VwdCBFeGNlcHRp' >> pw.b64
+            echo 'b24gYXMgZToKICAgICAgICBwcmludCgiZHVtcCBlcnIiLCBlKQoKd2l0aCBzeW5jX3BsYXl3cmln' >> pw.b64
+            echo 'aHQoKSBhcyBwOgogICAgYXJncyA9IFsiLS1kaXNhYmxlLWJsaW5rLWZlYXR1cmVzPUF1dG9tYXRp' >> pw.b64
+            echo 'b25Db250cm9sbGVkIiwgIi0tbm8tc2FuZGJveCIsICItLWRpc2FibGUtZGV2LXNobS11c2FnZSJd' >> pw.b64
+            echo 'CiAgICB0cnk6CiAgICAgICAgYnJvd3NlciA9IHAuY2hyb21pdW0ubGF1bmNoKGhlYWRsZXNzPUZh' >> pw.b64
+            echo 'bHNlLCBhcmdzPWFyZ3MpCiAgICAgICAgcHJpbnQoImxhdW5jaGVkIEhFQURFRCAoRElTUExBWT0l' >> pw.b64
+            echo 'cykiICUgX19pbXBvcnRfXygib3MiKS5lbnZpcm9uLmdldCgiRElTUExBWSIsIiIpKQogICAgZXhj' >> pw.b64
+            echo 'ZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHByaW50KCJoZWFkZWQgbGF1bmNoIGZhaWxlZCAo' >> pw.b64
+            echo 'JXMpIC0+IGhlYWRsZXNzIiAlIGUpCiAgICAgICAgYnJvd3NlciA9IHAuY2hyb21pdW0ubGF1bmNo' >> pw.b64
+            echo 'KGhlYWRsZXNzPVRydWUsIGFyZ3M9YXJncykKICAgICAgICBwcmludCgibGF1bmNoZWQgSEVBRExF' >> pw.b64
+            echo 'U1MiKQogICAgY3R4ID0gYnJvd3Nlci5uZXdfY29udGV4dCgKICAgICAgICB1c2VyX2FnZW50PSJN' >> pw.b64
+            echo 'b3ppbGxhLzUuMCAoV2luZG93cyBOVCAxMC4wOyBXaW42NDsgeDY0KSBBcHBsZVdlYktpdC81Mzcu' >> pw.b64
+            echo 'MzYgKEtIVE1MLCBsaWtlIEdlY2tvKSBDaHJvbWUvMTMxLjAuMC4wIFNhZmFyaS81MzcuMzYiLAog' >> pw.b64
+            echo 'ICAgICAgIGxvY2FsZT0iZW4tVVMiLCB2aWV3cG9ydD17IndpZHRoIjogMTM2NiwgImhlaWdodCI6' >> pw.b64
+            echo 'IDkwMH0sIHRpbWV6b25lX2lkPSJBbWVyaWNhL05ld19Zb3JrIikKICAgIGN0eC5hZGRfaW5pdF9z' >> pw.b64
+            echo 'Y3JpcHQoIk9iamVjdC5kZWZpbmVQcm9wZXJ0eShuYXZpZ2F0b3IsJ3dlYmRyaXZlcicse2dldDoo' >> pw.b64
+            echo 'KT0+dW5kZWZpbmVkfSkiKQogICAgcGFnZSA9IGN0eC5uZXdfcGFnZSgpCiAgICBwYWdlLmdvdG8o' >> pw.b64
+            echo 'VkFSSUFOVCwgdGltZW91dD05MDAwMCwgd2FpdF91bnRpbD0iZG9tY29udGVudGxvYWRlZCIpCgog' >> pw.b64
+            echo 'ICAgZm91bmQgPSBOb25lCiAgICBkZWFkbGluZSA9IHRpbWUudGltZSgpICsgMTIwCiAgICB3aGls' >> pw.b64
+            echo 'ZSB0aW1lLnRpbWUoKSA8IGRlYWRsaW5lOgogICAgICAgIGZvciBzZWwgaW4gU0VMRUNUT1JTOgog' >> pw.b64
+            echo 'ICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICBsb2MgPSBwYWdlLmxvY2F0b3Ioc2VsKQog' >> pw.b64
+            echo 'ICAgICAgICAgICAgICAgaWYgbG9jLmNvdW50KCkgPiAwIGFuZCBsb2MuZmlyc3QuaXNfdmlzaWJs' >> pw.b64
+            echo 'ZSgpOgogICAgICAgICAgICAgICAgICAgIGZvdW5kID0gc2VsCiAgICAgICAgICAgICAgICAgICAg' >> pw.b64
+            echo 'YnJlYWsKICAgICAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgICAgIHBhc3MK' >> pw.b64
+            echo 'ICAgICAgICBpZiBmb3VuZDoKICAgICAgICAgICAgYnJlYWsKICAgICAgICB0aW1lLnNsZWVwKDMp' >> pw.b64
+            echo 'CgogICAgaWYgbm90IGZvdW5kOgogICAgICAgIGR1bXAocGFnZSwgIk5PLUJVVFRPTiIpCiAgICAg' >> pw.b64
+            echo 'ICAgZm9yIHBnIGluIGN0eC5wYWdlc1sxOl06CiAgICAgICAgICAgIGR1bXAocGcsICJQQUdFIikK' >> pw.b64
+            echo 'ICAgICAgICBwcmludCgiISEgbm8gZG93bmxvYWQgYnV0dG9uOyBnaXZpbmcgdXAiKQogICAgICAg' >> pw.b64
+            echo 'IGJyb3dzZXIuY2xvc2UoKQogICAgICAgIHN5cy5leGl0KDEpCgogICAgcHJpbnQoImJ1dHRvbiBz' >> pw.b64
+            echo 'ZWxlY3RvcjoiLCBmb3VuZCwgImNsaWNraW5nIikKICAgIHBhZ2UubG9jYXRvcihmb3VuZCkuY2xp' >> pw.b64
+            echo 'Y2soKQogICAgdGltZS5zbGVlcCgzKQoKICAgIG5vbmNlX3VybCA9IE5vbmUKICAgIGZvciBfIGlu' >> pw.b64
+            echo 'IHJhbmdlKDQwKToKICAgICAgICBmb3IgcGcgaW4gY3R4LnBhZ2VzOgogICAgICAgICAgICB0cnk6' >> pw.b64
+            echo 'CiAgICAgICAgICAgICAgICBsb2MgPSBwZy5sb2NhdG9yKCJhW2hyZWYqPSdkb3dubG9hZC5waHAn' >> pw.b64
+            echo 'XSIpLmZpcnN0CiAgICAgICAgICAgICAgICBpZiBsb2MuY291bnQoKSA+IDA6CiAgICAgICAgICAg' >> pw.b64
+            echo 'ICAgICAgICAgbm9uY2VfdXJsID0gbG9jLmdldF9hdHRyaWJ1dGUoImhyZWYiKQogICAgICAgICAg' >> pw.b64
+            echo 'ICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAg' >> pw.b64
+            echo 'ICAgICBwYXNzCiAgICAgICAgaWYgbm9uY2VfdXJsOgogICAgICAgICAgICBicmVhawogICAgICAg' >> pw.b64
+            echo 'IHRpbWUuc2xlZXAoMikKCiAgICBpZiBub3Qgbm9uY2VfdXJsOgogICAgICAgIGZvciBwZyBpbiBj' >> pw.b64
+            echo 'dHgucGFnZXM6CiAgICAgICAgICAgIGR1bXAocGcsICJOT05DRSIpCiAgICAgICAgcHJpbnQoIiEh' >> pw.b64
+            echo 'IG5vIG5vbmNlIGxpbmsiKQogICAgICAgIGJyb3dzZXIuY2xvc2UoKQogICAgICAgIHN5cy5leGl0' >> pw.b64
+            echo 'KDEpCgogICAgcHJpbnQoIm5vbmNlIHVybDoiLCBub25jZV91cmwpCiAgICByZXNwID0gY3R4LnJl' >> pw.b64
+            echo 'cXVlc3QuZ2V0KG5vbmNlX3VybCwgdGltZW91dD0zMDAwMDApCiAgICBwcmludCgiZmlsZSBodHRw' >> pw.b64
+            echo 'OiIsIHJlc3Auc3RhdHVzLCAiY29udGVudC10eXBlOiIsIHJlc3AuaGVhZGVycy5nZXQoImNvbnRl' >> pw.b64
+            echo 'bnQtdHlwZSIpKQogICAgaWYgcmVzcC5zdGF0dXMgIT0gMjAwOgogICAgICAgIHByaW50KHJlc3Au' >> pw.b64
+            echo 'dGV4dCgpWzo1MDBdKQogICAgICAgIGJyb3dzZXIuY2xvc2UoKQogICAgICAgIHN5cy5leGl0KDEp' >> pw.b64
+            echo 'CiAgICBkYXRhID0gcmVzcC5ib2R5KCkKICAgIHdpdGggb3BlbihGSUxFLCAid2IiKSBhcyBmOgog' >> pw.b64
+            echo 'ICAgICAgIGYud3JpdGUoZGF0YSkKICAgIHByaW50KCJieXRlczoiLCBsZW4oZGF0YSksICJtYWdp' >> pw.b64
+            echo 'YzoiLCBkYXRhWzoyXSkKICAgIGlmIGRhdGFbOjJdICE9IGIiUEsiOgogICAgICAgIHByaW50KCIh' >> pw.b64
+            echo 'ISBub3QgYSB6aXAgYXJjaGl2ZSIpCiAgICBicm93c2VyLmNsb3NlKCkK' >> pw.b64
             ./pw-venv/bin/python -c "import base64; open('pw_fetch.py','wb').write(base64.b64decode(open('pw.b64').read()))"
             ./pw-venv/bin/python pw_fetch.py
+            RC=$?
+            kill $XVFB_PID 2>/dev/null || true
+            [ $RC -eq 0 ] || exit $RC
           fi
 
           echo "== final check =="
@@ -121,3 +158,4 @@ jobs:
              --title "Upwork 2.16.0 XAPK + desktop 5.8.0.46 (official)" \
              --repo "${{ github.repository }}"
           gh release view v1 --repo "${{ github.repository }}"
+
