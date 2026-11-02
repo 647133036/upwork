@@ -1,22 +1,19 @@
-name: Fetch Upwork 2.16.0 Official XAPK
-on: workflow_dispatch:
+name: fetch-upwork-apk
+on: workflow_dispatch
 jobs:
-  get-official-xapk:
+  fetch:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: 安装基础依赖
         run: sudo apt update && sudo apt install -y wget curl gh
-      - name: 配置环境变量并抓取页面
+      - name: 配置UA并抓取页面
         run: |
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
           echo "UA=$UA" >> $GITHUB_ENV
-          # 携带合法UA请求页面，避免被拦截
           curl -s -A "$UA" "https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/" > page.html
-          # 适配最新页面结构的正则提取nonce
           NONCE=$(grep -oP 'data-nonce="\K[a-zA-Z0-9]+' page.html | head -n 1)
-          # 容错处理，没匹配到也打印页面前200行方便排查，不直接硬退出
           if [ -z "$NONCE" ]; then
             echo "WARN: no nonce found, print page head"
             head -n 200 page.html
@@ -27,7 +24,6 @@ jobs:
         run: |
           FILE="upwork-2.16.0-arm64-v8a.xapk"
           curl -sL -c cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
-          # 校验文件合法性
           if ! file "$FILE" | grep -qE 'zip|archive|Android'; then
             echo "FAIL: result is not a valid archive"
             head -c 1500 "$FILE"
