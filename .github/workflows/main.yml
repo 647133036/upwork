@@ -1,4 +1,3 @@
-yaml
 name: fetch-upwork-official-packages
 
 on:
