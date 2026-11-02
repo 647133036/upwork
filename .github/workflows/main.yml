@@ -1,62 +1,135 @@
 name: fetch-upwork-official-packages
-on: workflow_dispatch
+
+on:
+  workflow_dispatch:
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: 初始化系统基础依赖
+      - name: Install deps
         run: |
-          sudo apt update && sudo apt install -y wget curl gh python3-pip
+          sudo apt-get update -y
+          sudo apt-get install -y curl file
           pip install playwright
-          playwright install chromium
-      - name: 无头浏览器绕过Cloudflare抓取安卓包
+          sudo python3 -m playwright install-deps chromium
+          python3 -m playwright install chromium
+
+      - name: Fetch Upwork XAPK (curl chain, playwright fallback)
         run: |
-          python3 << 'EOF'
-from playwright.sync_api import sync_playwright
-import os
-with sync_playwright() as p:
-  browser = p.chromium.launch(headless=True)
-  context = browser.new_context(
-    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    viewport={"width": 1920, "height": 1080},
-    locale="en-US"
-  )
-  page = context.new_page()
-  page.goto("https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/", timeout=30000)
-  page.wait_for_selector('[data-nonce]', timeout=25000)
-  nonce = page.locator('[data-nonce]').get_attribute('data-nonce')
-  with open(os.environ['GITHUB_ENV'], 'a') as f:
-    f.write(f"NONCE={nonce}\n")
-  browser.close()
-EOF
-      - name: 下载安卓XAPK并校验合法性
-        run: |
+          set -uo pipefail
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-          echo "UA=$UA" >> $GITHUB_ENV
+          VARIANT="https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
           FILE="upwork-2.16.0-arm64-v8a.xapk"
-          curl -sL -c cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
-          if ! file "$FILE" | grep -qE 'zip|archive|Android'; then
-            echo "FAIL: 安卓包下载损坏"
-            exit 1
+          CK="ck.txt"
+
+          # --- curl chain: variant -> button key -> interstitial -> nonce -> file ---
+          ok=$(curl -sL -c "$CK" -A "$UA" "$VARIANT" -o v.html -w "%{http_code}")
+          echo "variant page http=$ok"
+          BTNKEY="" ; VURL="$VARIANT"
+          if [ "$ok" = "200" ]; then
+            VURL2=$(grep -oE 'https://www\.apkmirror\.com/apk/[^"]*-android-apk-download/' v.html | head -1)
+            [ -n "$VURL2" ] && VURL="$VURL2"
+            ok2=$(curl -sL -c "$CK" -A "$UA" "$VURL" -o p.html -w "%{http_code}")
+            echo "variant2 http=$ok2 url=$VURL"
+            [ "$ok2" = "200" ] && BTNKEY=$(grep -oE 'download/\?key=[0-9a-f]+' p.html | head -1 | sed 's|download/?key=||')
+            echo "button key: $BTNKEY"
           fi
-          ls -la "$FILE"
-      - name: 直接拉取Upwork桌面端5.8.0.46安装包
+          NONCE=""
+          if [ -n "$BTNKEY" ]; then
+            ok3=$(curl -sL -b "$CK" -c "$CK" -A "$UA" "$VURL/download/?key=$BTNKEY" -o i.html -w "%{http_code}")
+            echo "interstitial http=$ok3"
+            [ "$ok3" = "200" ] && NONCE=$(grep -oE 'download\.php\?id=[0-9]+(&amp;|&)key=[0-9a-f]+' i.html | head -1 | sed 's/&amp;/\&/')
+            echo "nonce: $NONCE"
+          fi
+          if [ -n "$NONCE" ]; then
+            ok4=$(curl -sL -b "$CK" -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE" -w "%{http_code}")
+            echo "file http=$ok4"
+            if ! file "$FILE" | grep -qiE 'zip|android|archive'; then
+              echo "!! curl download not an archive; head:"; head -c 800 "$FILE"; echo; rm -f "$FILE"
+            fi
+          fi
+
+          # --- playwright fallback (real browser beats CF challenge) ---
+          if [ ! -f "$FILE" ]; then
+            echo "!! curl chain failed -> playwright fallback"
+            python3 - <<'PYEOF'
+          import sys, time
+          from playwright.sync_api import sync_playwright
+
+          VARIANT = "https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
+          FILE = "upwork-2.16.0-arm64-v8a.xapk"
+
+          with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                locale="en-US", viewport={"width": 1366, "height": 900})
+            page = ctx.new_page()
+            page.goto(VARIANT, timeout=60000, wait_until="domcontentloaded")
+            page.wait_for_selector("a.downloadButton", timeout=45000)
+            print("download button found; clicking")
+            page.click("a.downloadButton")
+            nonce_url = None
+            for _ in range(20):
+              for pg in ctx.pages:
+                try:
+                  loc = pg.locator("a[href*='download.php']").first
+                  if loc.count() > 0:
+                    nonce_url = loc.get_attribute("href")
+                    break
+                except Exception:
+                  pass
+              if nonce_url:
+                break
+              time.sleep(2)
+            if not nonce_url:
+              print("!! no nonce link; last page head:")
+              print(ctx.pages[-1].content()[:1000])
+              sys.exit(1)
+            print("nonce url:", nonce_url)
+            resp = ctx.request.get(nonce_url, timeout=300000)
+            print("file http:", resp.status)
+            if resp.status != 200:
+              print(resp.text()[:500]); sys.exit(1)
+            data = resp.body()
+            with open(FILE, "wb") as f:
+              f.write(data)
+            print("bytes:", len(data))
+            browser.close()
+          PYEOF
+          fi
+
+          echo "== final check =="
+          file "$FILE" ; ls -la "$FILE" ; sha256sum "$FILE"
+          file "$FILE" | grep -qiE 'zip|android|archive' || { echo "FATAL: XAPK not obtained"; exit 1; }
+
+      - name: Fetch desktop installer 5.8.0.46 (non-fatal)
         run: |
-          DESKTOP_FILE="UpworkSetup-5.8.0.46.exe"
-          curl -sL -A "$UA" "https://upwork-usw2-desktopapp.upwork.com/binaries/UpworkSetup-5.8.0.46.exe" -o "$DESKTOP_FILE"
-          if ! file "$DESKTOP_FILE" | grep -qE 'PE32|executable'; then
-            echo "FAIL: 桌面端安装包下载损坏"
-            exit 1
+          set -uo pipefail
+          URL="https://upwork-usw2-desktopapp.upwork.com/binaries/v5_8_0_46_d1c5f9d56c7f41ff/UpworkSetup64.exe"
+          FILE="Upwork-5.8.0.46-win64.exe"
+          code=$(curl -sL -A "Mozilla/5.0" "$URL" -o "$FILE" -w "%{http_code}")
+          echo "http=$code"
+          if [ "$code" = "200" ] && file "$FILE" | grep -qE 'PE32|executable'; then
+            ls -la "$FILE"; sha256sum "$FILE"
+          else
+            echo "WARN: desktop installer download failed (non-fatal, skipping)"
+            rm -f "$FILE"
           fi
-          ls -la "$DESKTOP_FILE"
-      - name: 自动上传双版本到GitHub Release
+
+      - name: Upload to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          gh release create v1 upwork-2.16.0-arm64-v8a.xapk UpworkSetup-5.8.0.46.exe \
-          --title "Upwork 全版本官方安装包合集" \
-          --repo "${{ github.repository }}" 2>/dev/null \
-          || gh release upload v1 upwork-2.16.0-arm64-v8a.xapk UpworkSetup-5.8.0.46.exe --repo "${{ github.repository }}" --clobber
+          FILES=$(ls upwork-2.16.0-arm64-v8a.xapk Upwork-5.8.0.46-win64.exe 2>/dev/null || true)
+          echo "uploading: $FILES"
+          [ -n "$FILES" ] || { echo "nothing to upload"; exit 1; }
+          gh release delete v1 --yes 2>/dev/null || true
+          gh release create v1 $FILES \
+             --title "Upwork 2.16.0 XAPK + desktop 5.8.0.46 (official)" \
+             --repo "${{ github.repository }}"
+          gh release view v1 --repo "${{ github.repository }}"
