@@ -1,0 +1,47 @@
+name: fetch-upwork-apk
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Upwork 2.16.0 XAPK from APKMirror
+        run: |
+          set -uo pipefail
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          VARIANT="https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
+
+          echo "== step1: variant page, grab current button key =="
+          curl -sL -c cookies.txt -A "$UA" "$VARIANT" -o variant.html
+          BTNKEY=$(grep -oE 'download/\?key=[0-9a-f]+' variant.html | head -1 | sed 's|download/?key=||')
+          echo "BTNKEY=$BTNKEY"
+          [ -n "$BTNKEY" ] || { echo "FAIL: no button key in variant page"; head -c 2000 variant.html; exit 1; }
+
+          echo "== step2: interstitial, grab one-time nonce =="
+          curl -sL -b cookies.txt -c cookies.txt -A "$UA" "$VARIANT/download/?key=$BTNKEY" -o interstitial.html
+          NONCE=$(grep -oE 'download\.php\?id=[0-9]+(&amp;|&)key=[0-9a-f]+' interstitial.html | head -1 | sed 's/&amp;/\&/')
+          echo "NONCE=$NONCE"
+          [ -n "$NONCE" ] || { echo "FAIL: no nonce in interstitial"; head -c 2000 interstitial.html; exit 1; }
+
+          echo "== step3: fetch the actual file (follow CDN redirect) =="
+          FILE="upwork-2.16.0-arm64-v8a.xapk"
+          curl -sL -b cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
+          echo "== verify =="
+          file "$FILE"
+          ls -la "$FILE"
+          sha256sum "$FILE"
+          # must look like a zip/xapk, not an error page
+          if ! file "$FILE" | grep -qiE 'zip|android|archive'; then
+            echo "FAIL: result is not an archive:"; head -c 1500 "$FILE"; exit 1
+          fi
+
+      - name: Upload as release asset
+        run: |
+          set -e
+          gh release create v1 upwork-2.16.0-arm64-v8a.xapk \
+             --title "Upwork 2.16.0 XAPK (arm64-v8a, Android 10+) from APKMirror" \
+             --repo "${{ github.repository }}" 2>/dev/null \
+          || gh release upload v1 upwork-2.16.0-arm64-v8a.xapk --repo "${{ github.repository }}" --clobber
+          gh release view v1 --repo "${{ github.repository }}"
