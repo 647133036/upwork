@@ -13,24 +13,28 @@ jobs:
           playwright install chromium
       - name: 无头浏览器绕过Cloudflare抓取安卓包
         run: |
-          from playwright.sync_api import sync_playwright
-          import os
-          with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-              user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-              viewport={"width": 1920, "height": 1080},
-              locale="en-US"
-            )
-            page = context.new_page()
-            page.goto("https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/", timeout=30000)
-            page.wait_for_selector('[data-nonce]', timeout=25000)
-            nonce = page.locator('[data-nonce]').get_attribute('data-nonce')
-            with open(os.environ['GITHUB_ENV'], 'a') as f:
-              f.write(f"NONCE={nonce}\n")
-            browser.close()
+          python3 << 'EOF'
+from playwright.sync_api import sync_playwright
+import os
+with sync_playwright() as p:
+  browser = p.chromium.launch(headless=True)
+  context = browser.new_context(
+    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    viewport={"width": 1920, "height": 1080},
+    locale="en-US"
+  )
+  page = context.new_page()
+  page.goto("https://www.apkmirror.com/apk/upwork-inc/upwork-2/upwork-2-16-0-release/", timeout=30000)
+  page.wait_for_selector('[data-nonce]', timeout=25000)
+  nonce = page.locator('[data-nonce]').get_attribute('data-nonce')
+  with open(os.environ['GITHUB_ENV'], 'a') as f:
+    f.write(f"NONCE={nonce}\n")
+  browser.close()
+EOF
       - name: 下载安卓XAPK并校验合法性
         run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          echo "UA=$UA" >> $GITHUB_ENV
           FILE="upwork-2.16.0-arm64-v8a.xapk"
           curl -sL -c cookies.txt -A "$UA" "https://www.apkmirror.com/wp-content/themes/APKMirror/$NONCE" -o "$FILE"
           if ! file "$FILE" | grep -qE 'zip|archive|Android'; then
