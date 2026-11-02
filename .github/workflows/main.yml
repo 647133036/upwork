@@ -57,51 +57,9 @@ jobs:
           # --- playwright fallback (real browser beats CF challenge) ---
           if [ ! -f "$FILE" ]; then
             echo "!! curl chain failed -> playwright fallback"
-            ./pw-venv/bin/python - <<'PYEOF'
-import sys, time
-from playwright.sync_api import sync_playwright
-
-VARIANT = "https://www.apkmirror.com/apk/upwork-global-inc/upwork/upwork-2-16-0-release/upwork-2-16-0-android-apk-download/"
-FILE = "upwork-2.16.0-arm64-v8a.xapk"
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    ctx = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        locale="en-US", viewport={"width": 1366, "height": 900})
-    page = ctx.new_page()
-    page.goto(VARIANT, timeout=60000, wait_until="domcontentloaded")
-    page.wait_for_selector("a.downloadButton", timeout=45000)
-    print("download button found; clicking")
-    page.click("a.downloadButton")
-    nonce_url = None
-    for _ in range(20):
-      for pg in ctx.pages:
-        try:
-          loc = pg.locator("a[href*='download.php']").first
-          if loc.count() > 0:
-            nonce_url = loc.get_attribute("href")
-            break
-        except Exception:
-          pass
-      if nonce_url:
-        break
-      time.sleep(2)
-    if not nonce_url:
-      print("!! no nonce link; last page head:")
-      print(ctx.pages[-1].content()[:1000])
-      sys.exit(1)
-    print("nonce url:", nonce_url)
-    resp = ctx.request.get(nonce_url, timeout=300000)
-    print("file http:", resp.status)
-    if resp.status != 200:
-      print(resp.text()[:500]); sys.exit(1)
-    data = resp.body()
-    with open(FILE, "wb") as f:
-      f.write(data)
-    print("bytes:", len(data))
-    browser.close()
-PYEOF
+            PWB64="aW1wb3J0IHN5cywgdGltZQpmcm9tIHBsYXl3cmlnaHQuc3luY19hcGkgaW1wb3J0IHN5bmNfcGxheXdyaWdodAoKVkFSSUFOVCA9ICJodHRwczovL3d3dy5hcGttaXJyb3IuY29tL2Fway91cHdvcmstZ2xvYmFsLWluYy91cHdvcmsvdXB3b3JrLTItMTYtMC1yZWxlYXNlL3Vwd29yay0yLTE2LTAtYW5kcm9pZC1hcGstZG93bmxvYWQvIgpGSUxFID0gInVwd29yay0yLjE2LjAtYXJtNjQtdjhhLnhhcGsiCgp3aXRoIHN5bmNfcGxheXdyaWdodCgpIGFzIHA6CiAgICBicm93c2VyID0gcC5jaHJvbWl1bS5sYXVuY2goaGVhZGxlc3M9VHJ1ZSkKICAgIGN0eCA9IGJyb3dzZXIubmV3X2NvbnRleHQoCiAgICAgICAgdXNlcl9hZ2VudD0iTW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkgQXBwbGVXZWJLaXQvNTM3LjM2IChLSFRNTCwgbGlrZSBHZWNrbykgQ2hyb21lLzEzMS4wLjAuMCBTYWZhcmkvNTM3LjM2IiwKICAgICAgICBsb2NhbGU9ImVuLVVTIiwgdmlld3BvcnQ9eyJ3aWR0aCI6IDEzNjYsICJoZWlnaHQiOiA5MDB9KQogICAgcGFnZSA9IGN0eC5uZXdfcGFnZSgpCiAgICBwYWdlLmdvVG8oVkFSSUFOVCwgdGltZW91dD02MDAwMCwgd2FpdF91bnRpbD0iZG9tY29udGVudGxvYWRlZCIpCiAgICBwYWdlLndhaXRfZm9yX3NlbGVjdG9yKCJhLmRvd25sb2FkQnV0dG9uIiwgdGltZW91dD00NTAwMCkKICAgIHByaW50KCJkb3dubG9hZCBidXR0b24gZm91bmQ7IGNsaWNraW5nIikKICAgIHBhZ2UuY2xpY2soImEuZG93bmxvYWRCdXR0b24iKQogICAgbm9uY2VfdXJsID0gTm9uZQogICAgZm9yIF8gaW4gcmFuZ2UoMjApOgogICAgICBmb3IgcGcgaW4gY3R4LnBhZ2VzOgogICAgICAgIHRyeToKICAgICAgICAgIGxvYyA9IHBnLmxvY2F0b3IoImFbaHJlZj0nZG93bmxvYWQucGhwJ9iIikuZmlyc3QKICAgICAgICAgIGlmIGxvYy5jb3VudCgpID4gMDogICAgICAgICAgICBub25jZV91cmwgPSBsb2MuZ2V0X2F0dHJpYnV0ZSgiaHJlZiIpCiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgIHBhc3MKICAgICAgIGlmIG5vbmNlX3VybDoKICAgICAgICBicmVhawogICAgICB0aW1lLnNsZWVwKDIpCiAgICBpZiBub3Qgbm9uY2VfdXJsOgogICAgICBwcmludCgiIS4gbm8gbm9uY2UgbGluazsgbGFzdCBwYWdlIGhlYWQ6IikKICAgICAgcHJpbnQoY3R4LnBhZ2VzWy0xXS5jb250ZW50KClbOjEwMDBdKQogICAgICBzeXMuZXhpdCgxKQogICAgcHJpbnQoIm5vbmNlIHVybDoiLCBub25jZV91cmwpCiAgICByZXNwID0gY3R4LnJlcXVlc3QuZ2V0KG5vbmNlX3VybCwgdGltZW91dD0zMDAwMDApCiAgICBwcmludCgiZmlsZSBodHRwOiIsIHJlc3Auc3RhdHVzKQogICAgaWYgcmVzcC5zdGF0dXMgIT0gMjAwOgogICAgICBwcmludChyZXNwLnRleHQoKVs6NTAwXSk7IHN5cy5leGl0KDEpCiAgICBkYXRhID0gcmVzcC5ib2R5KClKICAgIHdpdGggb3BlbihGSUxFLCAid2IiKSBhcyBmOgogICAgICBmLndyaXRlKGRhdGEpCiAgICBwcmludCgiYnl0ZXM6IiwgbGVuKGRhdGEpKQogICAgYnJvd3Nlci5jbG9zZSgpCg=="
+            ./pw-venv/bin/python -c "import base64; open('pw_fetch.py','wb').write(base64.b64decode('${PWB64}'))"
+            ./pw-venv/bin/python pw_fetch.py
           fi
 
           echo "== final check =="
