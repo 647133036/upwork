@@ -54,10 +54,39 @@ jobs:
           fi
 
           # --- playwright fallback (real browser beats CF challenge) ---
+          # python source shipped as base64 in short lines; b64decode ignores newlines
           if [ ! -f "$FILE" ]; then
             echo "!! curl chain failed -> playwright fallback"
-            PWB64="aW1wb3J0IHN5cywgdGltZQpmcm9tIHBsYXl3cmlnaHQuc3luY19hcGkgaW1wb3J0IHN5bmNfcGxheXdyaWdodAoKVkFSSUFOVCA9ICJodHRwczovL3d3dy5hcGttaXJyb3IuY29tL2Fway91cHdvcmstZ2xvYmFsLWluYy91cHdvcmsvdXB3b3JrLTItMTYtMC1yZWxlYXNlL3Vwd29yay0yLTE2LTAtYW5kcm9pZC1hcGstZG93bmxvYWQvIgpGSUxFID0gInVwd29yay0yLjE2LjAtYXJtNjQtdjhhLnhhcGsiCgp3aXRoIHN5bmNfcGxheXdyaWdodCgpIGFzIHA6CiAgICBicm93c2VyID0gcC5jaHJvbWl1bS5sYXVuY2goaGVhZGxlc3M9VHJ1ZSkKICAgIGN0eCA9IGJyb3dzZXIubmV3X2NvbnRleHQoCiAgICAgICAgdXNlcl9hZ2VudD0iTW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkgQXBwbGVXZWJLaXQvNTM3LjM2IChLSFRNTCwgbGlrZSBHZWNrbykgQ2hyb21lLzEzMS4wLjAuMCBTYWZhcmkvNTM3LjM2IiwKICAgICAgICBsb2NhbGU9ImVuLVVTIiwgdmlld3BvcnQ9eyJ3aWR0aCI6IDEzNjYsICJoZWlnaHQiOiA5MDB9KQogICAgcGFnZSA9IGN0eC5uZXdfcGFnZSgpCiAgICBwYWdlLmdvVG8oVkFSSUFOVCwgdGltZW91dD02MDAwMCwgd2FpdF91bnRpbD0iZG9tY29udGVudGxvYWRlZCIpCiAgICBwYWdlLndhaXRfZm9yX3NlbGVjdG9yKCJhLmRvd25sb2FkQnV0dG9uIiwgdGltZW91dD00NTAwMCkKICAgIHByaW50KCJkb3dubG9hZCBidXR0b24gZm91bmQ7IGNsaWNraW5nIikKICAgIHBhZ2UuY2xpY2soImEuZG93bmxvYWRCdXR0b24iKQogICAgbm9uY2VfdXJsID0gTm9uZQogICAgZm9yIF8gaW4gcmFuZ2UoMjApOgogICAgICBmb3IgcGcgaW4gY3R4LnBhZ2VzOgogICAgICAgIHRyeToKICAgICAgICAgIGxvYyA9IHBnLmxvY2F0b3IoImFbaHJlZj0nZG93bmxvYWQucGhwJ9iIikuZmlyc3QKICAgICAgICAgIGlmIGxvYy5jb3VudCgpID4gMDogICAgICAgICAgICBub25jZV91cmwgPSBsb2MuZ2V0X2F0dHJpYnV0ZSgiaHJlZiIpCiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgIHBhc3MKICAgICAgIGlmIG5vbmNlX3VybDoKICAgICAgICBicmVhawogICAgICB0aW1lLnNsZWVwKDIpCiAgICBpZiBub3Qgbm9uY2VfdXJsOgogICAgICBwcmludCgiIS4gbm8gbm9uY2UgbGluazsgbGFzdCBwYWdlIGhlYWQ6IikKICAgICAgcHJpbnQoY3R4LnBhZ2VzWy0xXS5jb250ZW50KClbOjEwMDBdKQogICAgICBzeXMuZXhpdCgxKQogICAgcHJpbnQoIm5vbmNlIHVybDoiLCBub25jZV91cmwpCiAgICByZXNwID0gY3R4LnJlcXVlc3QuZ2V0KG5vbmNlX3VybCwgdGltZW91dD0zMDAwMDApCiAgICBwcmludCgiZmlsZSBodHRwOiIsIHJlc3Auc3RhdHVzKQogICAgaWYgcmVzcC5zdGF0dXMgIT0gMjAwOgogICAgICBwcmludChyZXNwLnRleHQoKVs6NTAwXSk7IHN5cy5leGl0KDEpCiAgICBkYXRhID0gcmVzcC5ib2R5KClKICAgIHdpdGggb3BlbihGSUxFLCAid2IiKSBhcyBmOgogICAgICBmLndyaXRlKGRhdGEpCiAgICBwcmludCgiYnl0ZXM6IiwgbGVuKGRhdGEpKQogICAgYnJvd3Nlci5jbG9zZSgpCg=="
-            ./pw-venv/bin/python -c "import base64; open('pw_fetch.py','wb').write(base64.b64decode('${PWB64}'))"
+            : > pw.b64
+            echo 'aW1wb3J0IHN5cywgdGltZQpmcm9tIHBsYXl3cmlnaHQuc3luY19hcGkgaW1wb3J0IHN5bmNfcGxh' >> pw.b64
+            echo 'eXdyaWdodAoKVkFSSUFOVCA9ICJodHRwczovL3d3dy5hcGttaXJyb3IuY29tL2Fway91cHdvcmst' >> pw.b64
+            echo 'Z2xvYmFsLWluYy91cHdvcmsvdXB3b3JrLTItMTYtMC1yZWxlYXNlL3Vwd29yay0yLTE2LTAtYW5k' >> pw.b64
+            echo 'cm9pZC1hcGstZG93bmxvYWQvIgpGSUxFID0gInVwd29yay0yLjE2LjAtYXJtNjQtdjhhLnhhcGsi' >> pw.b64
+            echo 'Cgp3aXRoIHN5bmNfcGxheXdyaWdodCgpIGFzIHA6CiAgICBicm93c2VyID0gcC5jaHJvbWl1bS5s' >> pw.b64
+            echo 'YXVuY2goaGVhZGxlc3M9VHJ1ZSkKICAgIGN0eCA9IGJyb3dzZXIubmV3X2NvbnRleHQoCiAgICAg' >> pw.b64
+            echo 'ICAgdXNlcl9hZ2VudD0iTW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkg' >> pw.b64
+            echo 'QXBwbGVXZWJLaXQvNTM3LjM2IChLSFRNTCwgbGlrZSBHZWNrbykgQ2hyb21lLzEzMS4wLjAuMCBT' >> pw.b64
+            echo 'YWZhcmkvNTM3LjM2IiwKICAgICAgICBsb2NhbGU9ImVuLVVTIiwgdmlld3BvcnQ9eyJ3aWR0aCI6' >> pw.b64
+            echo 'IDEzNjYsICJoZWlnaHQiOiA5MDB9KQogICAgcGFnZSA9IGN0eC5uZXdfcGFnZSgpCiAgICBwYWdl' >> pw.b64
+            echo 'LmdvdG8oVkFSSUFOVCwgdGltZW91dD02MDAwMCwgd2FpdF91bnRpbD0iZG9tY29udGVudGxvYWRl' >> pw.b64
+            echo 'ZCIpCiAgICBwYWdlLndhaXRfZm9yX3NlbGVjdG9yKCJhLmRvd25sb2FkQnV0dG9uIiwgdGltZW91' >> pw.b64
+            echo 'dD00NTAwMCkKICAgIHByaW50KCJkb3dubG9hZCBidXR0b24gZm91bmQ7IGNsaWNraW5nIikKICAg' >> pw.b64
+            echo 'IHBhZ2UuY2xpY2soImEuZG93bmxvYWRCdXR0b24iKQogICAgbm9uY2VfdXJsID0gTm9uZQogICAg' >> pw.b64
+            echo 'Zm9yIF8gaW4gcmFuZ2UoMjApOgogICAgICBmb3IgcGcgaW4gY3R4LnBhZ2VzOgogICAgICAgIHRy' >> pw.b64
+            echo 'eToKICAgICAgICAgIGxvYyA9IHBnLmxvY2F0b3IoImFbaHJlZio9J2Rvd25sb2FkLnBocCddIiku' >> pw.b64
+            echo 'Zmlyc3QKICAgICAgICAgIGlmIGxvYy5jb3VudCgpID4gMDoKICAgICAgICAgICAgbm9uY2VfdXJs' >> pw.b64
+            echo 'ID0gbG9jLmdldF9hdHRyaWJ1dGUoImhyZWYiKQogICAgICAgICAgICBicmVhawogICAgICAgIGV4' >> pw.b64
+            echo 'Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICBwYXNzCiAgICAgIGlmIG5vbmNlX3VybDoKICAgICAg' >> pw.b64
+            echo 'ICBicmVhawogICAgICB0aW1lLnNsZWVwKDIpCiAgICBpZiBub3Qgbm9uY2VfdXJsOgogICAgICBw' >> pw.b64
+            echo 'cmludCgiISEgbm8gbm9uY2UgbGluazsgbGFzdCBwYWdlIGhlYWQ6IikKICAgICAgcHJpbnQoY3R4' >> pw.b64
+            echo 'LnBhZ2VzWy0xXS5jb250ZW50KClbOjEwMDBdKQogICAgICBzeXMuZXhpdCgxKQogICAgcHJpbnQo' >> pw.b64
+            echo 'Im5vbmNlIHVybDoiLCBub25jZV91cmwpCiAgICByZXNwID0gY3R4LnJlcXVlc3QuZ2V0KG5vbmNl' >> pw.b64
+            echo 'X3VybCwgdGltZW91dD0zMDAwMDApCiAgICBwcmludCgiZmlsZSBodHRwOiIsIHJlc3Auc3RhdHVz' >> pw.b64
+            echo 'KQogICAgaWYgcmVzcC5zdGF0dXMgIT0gMjAwOgogICAgICBwcmludChyZXNwLnRleHQoKVs6NTAw' >> pw.b64
+            echo 'XSk7IHN5cy5leGl0KDEpCiAgICBkYXRhID0gcmVzcC5ib2R5KCkKICAgIHdpdGggb3BlbihGSUxF' >> pw.b64
+            echo 'LCAid2IiKSBhcyBmOgogICAgICBmLndyaXRlKGRhdGEpCiAgICBwcmludCgiYnl0ZXM6IiwgbGVu' >> pw.b64
+            echo 'KGRhdGEpKQogICAgYnJvd3Nlci5jbG9zZSgpCg==' >> pw.b64
+            ./pw-venv/bin/python -c "import base64; open('pw_fetch.py','wb').write(base64.b64decode(open('pw.b64').read()))"
             ./pw-venv/bin/python pw_fetch.py
           fi
 
